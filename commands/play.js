@@ -1,141 +1,196 @@
-const { play } = require("../include/play");
-const ytdl = require("ytdl-core");
-const YouTubeAPI = require("simple-youtube-api");
-const scdl = require("soundcloud-downloader").default;
-const https = require("https");
-const { MessageEmbed } = require("discord.js");
-const { YOUTUBE_API_KEY, SOUNDCLOUD_CLIENT_ID, LOCALE, DEFAULT_VOLUME } = require("../util/EvobotUtil");
-const youtube = new YouTubeAPI(YOUTUBE_API_KEY);
-const i18n = require("i18n");
+Skip to content
+Search or jump to…
+Pull requests
+Issues
+Marketplace
+Explore
+ 
+@DeEenkhoornShow 
+navaneethkm004
+/
+Discord-24x7-Radio-Bot
+Public
+Code
+Issues
+6
+Pull requests
+6
+Actions
+Projects
+Wiki
+Security
+Insights
+Discord-24x7-Radio-Bot/commands/play.js /
+@navaneethkm004
+navaneethkm004 Update play.js
+Latest commit 6e03453 on 16 Feb 2021
+ History
+ 1 contributor
+151 lines (139 sloc)  6.56 KB
 
-i18n.setLocale(LOCALE);
+const { Util, MessageEmbed } = require("discord.js");
+const ytdl = require("ytdl-core");
+const ytdlDiscord = require("ytdl-core-discord");
+const yts = require("yt-search");
+const fs = require("fs");
+const sendError = require("../util/error");
 
 module.exports = {
-  name: "play",
-  cooldown: 3,
-  aliases: ["p"],
-  description: i18n.__("play.description"),
-  async execute(message, args) {
-    const { channel } = message.member.voice;
+    info: {
+        name: "play",
+        description: "To play songs :D",
+        usage: "<Youtube_Live_URL>",
+        aliases: ["p"],
+    },
 
-    const serverQueue = message.client.queue.get(message.guild.id);
-    if (!channel) return message.reply(i18n.__("play.errorNotChannel")).catch(console.error);
-    if (serverQueue && channel !== message.guild.me.voice.channel)
-      return message
-        .reply(i18n.__mf("play.errorNotInSameChannel", { user: message.client.user }))
-        .catch(console.error);
+    run: async function (client, message, args) {
+        let channel = message.member.voice.channel;
+        if (!channel) return sendError("I'm sorry but you need to be in a voice channel to play music!", message.channel);
 
-    if (!args.length)
-      return message
-        .reply(i18n.__mf("play.usageReply", { prefix: message.client.prefix }))
-        .catch(console.error);
+        const permissions = channel.permissionsFor(message.client.user);
+        if (!permissions.has("CONNECT")) return sendError("I cannot connect to your voice channel, make sure I have the proper permissions!", message.channel);
+        if (!permissions.has("SPEAK")) return sendError("I cannot speak in this voice channel, make sure I have the proper permissions!", message.channel);
 
-    const permissions = channel.permissionsFor(message.client.user);
-    if (!permissions.has("CONNECT")) return message.reply(i18n.__("play.missingPermissionConnect"));
-    if (!permissions.has("SPEAK")) return message.reply(i18n.__("play.missingPermissionSpeak"));
+        var searchString = args.join(" ");
+        if (!searchString) return sendError("You didn't provide a song to play!", message.channel);
+        const url = args[0] ? args[0].replace(/<(.+)>/g, "$1") : "";
+        var serverQueue = message.client.queue.get(message.guild.id);
 
-    const search = args.join(" ");
-    const videoPattern = /^(https?:\/\/)?(www\.)?(m\.)?(youtube\.com|youtu\.?be)\/.+$/gi;
-    const playlistPattern = /^.*(list=)([^#\&\?]*).*/gi;
-    const scRegex = /^https?:\/\/(soundcloud\.com)\/(.*)$/;
-    const mobileScRegex = /^https?:\/\/(soundcloud\.app\.goo\.gl)\/(.*)$/;
-    const url = args[0];
-    const urlValid = videoPattern.test(args[0]);
+        let songInfo = null;
+        let song = null;
+        if (url.match(/^(https?:\/\/)?(www\.)?(m\.)?(youtube\.com|youtu\.?be)\/.+$/gi)) {
+            try {
+                songInfo = await ytdl.getInfo(url);
+                if (!songInfo) return sendError("Looks like i was unable to find the song on YouTube", message.channel);
+                song = {
+                    id: songInfo.videoDetails.videoId,
+                    title: songInfo.videoDetails.title,
+                    url: songInfo.videoDetails.video_url,
+                    img: songInfo.player_response.videoDetails.thumbnail.thumbnails[0].url,
+                    duration: songInfo.videoDetails.lengthSeconds,
+                    ago: songInfo.videoDetails.publishDate,
+                    views: String(songInfo.videoDetails.viewCount).padStart(10, " "),
+                    req: message.author,
+                };
+            } catch (error) {
+                console.error(error);
+                return message.reply(error.message).catch(console.error);
+            }
+        } else {
+            try {
+                var searched = await yts.search(searchString);
+                if (searched.videos.length === 0) return sendError("Looks like i was unable to find the song on YouTube", message.channel);
 
-    // Start the playlist if playlist url was provided
-    if (!videoPattern.test(args[0]) && playlistPattern.test(args[0])) {
-      return message.client.commands.get("playlist").execute(message, args);
-    } else if (scdl.isValidUrl(url) && url.includes("/sets/")) {
-      return message.client.commands.get("playlist").execute(message, args);
-    }
+                songInfo = searched.videos[0];
+                song = {
+                    id: songInfo.videoId,
+                    title: Util.escapeMarkdown(songInfo.title),
+                    views: String(songInfo.views).padStart(10, " "),
+                    url: songInfo.url,
+                    ago: songInfo.ago,
+                    img: songInfo.image,
+                    req: message.author,
+                };
+            } catch (error) {
+                console.error(error);
+                return message.reply(error.message).catch(console.error);
+            }
+        }
 
-    if (mobileScRegex.test(url)) {
-      try {
-        https.get(url, function (res) {
-          if (res.statusCode == "302") {
-            return message.client.commands.get("play").execute(message, [res.headers.location]);
-          } else {
-            return message.reply("No content could be found at that url.").catch(console.error);
-          }
-        });
-      } catch (error) {
-        console.error(error);
-        return message.reply(error.message).catch(console.error);
-      }
-      return message.reply("Following url redirection...").catch(console.error);
-    }
+        if (serverQueue) {
+            serverQueue.songs.push(song);
+            let thing = new MessageEmbed()
+                .setAuthor("Song has been added to queue", "https://github.com/navaneethkm004/my-images/blob/main/giphy.gif?raw=true")
+                .setThumbnail(song.img)
+                .setColor("#fffdd0")
+                .addField("Name", song.title, true)
+                .addField("Duration", song.duration, true)
+                .addField("Requested by", song.req.tag, true)
+                .setFooter(`Views: ${song.views} | ${song.ago}`);
+            return message.channel.send(thing);
+        }
 
-    const queueConstruct = {
-      textChannel: message.channel,
-      channel,
-      connection: null,
-      songs: [],
-      loop: false,
-      volume: DEFAULT_VOLUME || 100,
-      playing: true
-    };
-
-    let songInfo = null;
-    let song = null;
-
-    if (urlValid) {
-      try {
-        songInfo = await ytdl.getInfo(url);
-        song = {
-          title: songInfo.videoDetails.title,
-          url: songInfo.videoDetails.video_url,
-          duration: songInfo.videoDetails.lengthSeconds
+        const queueConstruct = {
+            textChannel: message.channel,
+            voiceChannel: channel,
+            connection: null,
+            songs: [],
+            volume: 80,
+            playing: true,
+            loop: true,
         };
-      } catch (error) {
-        console.error(error);
-        return message.reply(error.message).catch(console.error);
-      }
-    } else if (scRegex.test(url)) {
-      try {
-        const trackInfo = await scdl.getInfo(url, SOUNDCLOUD_CLIENT_ID);
-        song = {
-          title: trackInfo.title,
-          url: trackInfo.permalink_url,
-          duration: Math.ceil(trackInfo.duration / 1000)
+        message.client.queue.set(message.guild.id, queueConstruct);
+        queueConstruct.songs.push(song);
+
+        const play = async (song) => {
+            const queue = message.client.queue.get(message.guild.id);
+            if (!song) {
+                sendError(
+                    "Thank you for using my code! [GitHub](https://github.com/navaneethkm004/Discord-24x7-Radio-Bot)",
+                    message.channel
+                );
+                message.client.queue.delete(message.guild.id);
+                return;
+            }
+            let stream = null;
+            if (song.url.includes("youtube.com")) {
+                stream = await ytdl(song.url);
+                stream.on("error", function (er) {
+                    if (er) {
+                        if (queue) {
+                            queue.songs.shift();
+                            play(queue.songs[0]);
+                            return sendError(`An unexpected error has occurred.\nPossible type \`${er}\``, message.channel);
+                        }
+                    }
+                });
+            }
+            queue.connection.on("disconnect", () => message.client.queue.delete(message.guild.id));
+
+            const dispatcher = queue.connection.play(ytdl(song.url, { quality: "highestaudio", highWaterMark: 1 << 25, type: "opus" })).on("finish", () => {
+                const shiffed = queue.songs.shift();
+                if (queue.loop === true) {
+                    queue.songs.push(shiffed);
+                }
+                play(queue.songs[0]);
+            });
+
+            dispatcher.setVolumeLogarithmic(queue.volume / 100);
+            let thing = new MessageEmbed()
+                .setAuthor("Started Playing Music!", "https://github.com/navaneethkm004/my-images/blob/main/giphy.gif?raw=true")
+                .setThumbnail(song.img)
+                .setColor("#fffdd0")
+                .addField("Name", song.title, true)
+                .addField("Duration", song.duration, true)
+                .addField("Requested by", song.req.tag, true)
+                .setFooter(`Views: ${song.views} | ${song.ago}`);
+            queue.textChannel.send(thing);
         };
-      } catch (error) {
-        console.error(error);
-        return message.reply(error.message).catch(console.error);
-      }
-    } else {
-      try {
-        const results = await youtube.searchVideos(search, 1, { part: "snippet" });
-        songInfo = await ytdl.getInfo(results[0].url);
-        song = {
-          title: songInfo.videoDetails.title,
-          url: songInfo.videoDetails.video_url,
-          duration: songInfo.videoDetails.lengthSeconds
-        };
-      } catch (error) {
-        console.error(error);
-        return message.reply(error.message).catch(console.error);
-      }
-    }
 
-    if (serverQueue) {
-      serverQueue.songs.push(song);
-      return serverQueue.textChannel
-        .send(i18n.__mf("play.queueAdded", { title: song.title, author: message.author }))
-        .catch(console.error);
-    }
-
-    queueConstruct.songs.push(song);
-    message.client.queue.set(message.guild.id, queueConstruct);
-
-    try {
-      queueConstruct.connection = await channel.join();
-      await queueConstruct.connection.voice.setSelfDeaf(true);
-      play(queueConstruct.songs[0], message);
-    } catch (error) {
-      console.error(error);
-      message.client.queue.delete(message.guild.id);
-      await channel.leave();
-      return message.channel.send(i18n.__('play.cantJoinChannel', {error: error})).catch(console.error);
-    }
-  }
+        try {
+            const connection = await channel.join();
+            queueConstruct.connection = connection;
+            play(queueConstruct.songs[0]);
+        } catch (error) {
+            console.error(`I could not join the voice channel: ${error}`);
+            message.client.queue.delete(message.guild.id);
+            await channel.leave();
+            return sendError(`I could not join the voice channel: ${error}`, message.channel);
+        }
+    },
 };
+Footer
+© 2022 GitHub, Inc.
+Footer navigation
+Terms
+Privacy
+Security
+Status
+Docs
+Contact GitHub
+Pricing
+API
+Training
+Blog
+About
+You have no unread notifications
