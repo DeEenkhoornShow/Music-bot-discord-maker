@@ -1,196 +1,202 @@
-Skip to content
-Search or jump to…
-Pull requests
-Issues
-Marketplace
-Explore
- 
-@DeEenkhoornShow 
-navaneethkm004
-/
-Discord-24x7-Radio-Bot
-Public
-Code
-Issues
-6
-Pull requests
-6
-Actions
-Projects
-Wiki
-Security
-Insights
-Discord-24x7-Radio-Bot/commands/play.js /
-@navaneethkm004
-navaneethkm004 Update play.js
-Latest commit 6e03453 on 16 Feb 2021
- History
- 1 contributor
-151 lines (139 sloc)  6.56 KB
+const Discord = require("discord.js");
 
-const { Util, MessageEmbed } = require("discord.js");
-const ytdl = require("ytdl-core");
-const ytdlDiscord = require("ytdl-core-discord");
-const yts = require("yt-search");
-const fs = require("fs");
-const sendError = require("../util/error");
+module.exports.run = async (client, message, args) => {
+  let query = args.join(" ");
 
-module.exports = {
-    info: {
-        name: "play",
-        description: "To play songs :D",
-        usage: "<Youtube_Live_URL>",
-        aliases: ["p"],
-    },
+  if (!message.member.voice.channel)
+    return message.channel.send({
+      embed: {
+        color: client.config.error,
+        description: `**Error** | You are not in a voice channel.`
+      }
+    });
+  if (
+    message.guild.me.voice.channel &&
+    message.member.voice.channel.id !== message.guild.me.voice.channel.id
+  )
+    return message.channel.send({
+      embed: {
+        color: client.config.error,
+        description: `**Error**| You are not in my voice channel.`
+      }
+    });
 
-    run: async function (client, message, args) {
-        let channel = message.member.voice.channel;
-        if (!channel) return sendError("I'm sorry but you need to be in a voice channel to play music!", message.channel);
+  let search = await client.player.searchTracks(query).catch(e => {
+    return message.channel.send({
+      embed: {
+        color: client.config.error,
+        description: `**Error** | No results were found for that query.`
+      }
+    });
+  });
+  if (search.length < 1)
+    return message.channel.send({
+      embed: {
+        color: client.config.embed,
+        description: `**Error** | Query was too short... Please try again! `
+      }
+    });
 
-        const permissions = channel.permissionsFor(message.client.user);
-        if (!permissions.has("CONNECT")) return sendError("I cannot connect to your voice channel, make sure I have the proper permissions!", message.channel);
-        if (!permissions.has("SPEAK")) return sendError("I cannot speak in this voice channel, make sure I have the proper permissions!", message.channel);
+  // let query = args.join(" ");
+  let requestedBy = client.users.cache.get(message.author.id).tag;
 
-        var searchString = args.join(" ");
-        if (!searchString) return sendError("You didn't provide a song to play!", message.channel);
-        const url = args[0] ? args[0].replace(/<(.+)>/g, "$1") : "";
-        var serverQueue = message.client.queue.get(message.guild.id);
+  if (!query)
+    return message.channel.send({
+      embed: {
+        color: client.config.error,
+        description: `**Error** | Please enter a search query to search.`
+      }
+    });
 
-        let songInfo = null;
-        let song = null;
-        if (url.match(/^(https?:\/\/)?(www\.)?(m\.)?(youtube\.com|youtu\.?be)\/.+$/gi)) {
-            try {
-                songInfo = await ytdl.getInfo(url);
-                if (!songInfo) return sendError("Looks like i was unable to find the song on YouTube", message.channel);
-                song = {
-                    id: songInfo.videoDetails.videoId,
-                    title: songInfo.videoDetails.title,
-                    url: songInfo.videoDetails.video_url,
-                    img: songInfo.player_response.videoDetails.thumbnail.thumbnails[0].url,
-                    duration: songInfo.videoDetails.lengthSeconds,
-                    ago: songInfo.videoDetails.publishDate,
-                    views: String(songInfo.videoDetails.viewCount).padStart(10, " "),
-                    req: message.author,
-                };
-            } catch (error) {
-                console.error(error);
-                return message.reply(error.message).catch(console.error);
-            }
+  let playing = client.player.isPlaying(message.guild.id);
+  if (client.player.isPlaying(message.guild.id)) {
+    let song = await client.player.addToQueue(
+      message.guild.id,
+      query,
+      requestedBy
+    );
+    message.channel.send({
+      embed: {
+        color: client.config.embed,
+        description: `**Added To Queue** | [${song.name}](${song.url})`,
+        thumbnail: {
+          url: song.thumbnail
+        },
+        fields: [
+          {
+            name: `Duration`,
+            value: `\`${song.duration}\``,
+            inline: true
+          },
+          {
+            name: `Author`,
+            value: `\`${song.author}\``,
+            inline: true
+          },
+          {
+            name: `Views`,
+            value: `\`${song.views.toLocaleString()}\``,
+            inline: true
+          },
+          {
+            name: `Requested By`,
+            value: `\`${song.requestedBy}\``,
+            inline: true
+          }
+        ]
+      }
+    });
+  } else {
+    let song = await client.player.play(
+      message.member.voice.channel,
+      query,
+      requestedBy
+    );
+    client.player.setVolume("100");
+    message.channel.send({
+      embed: {
+        color: client.config.embed,
+        description: `**Now Playing** | [${song.name}](${song.url})`,
+        thumbnail: {
+          url: song.thumbnail
+        },
+        fields: [
+          {
+            name: `Duration`,
+            value: `\`${song.duration}\``,
+            inline: true
+          },
+          {
+            name: `Author`,
+            value: `\`${song.author}\``,
+            inline: true
+          },
+          {
+            name: `Views`,
+            value: `\`${song.views.toLocaleString()}\``,
+            inline: true
+          },
+          {
+            name: `Requested By`,
+            value: `\`${song.requestedBy}\``,
+            inline: true
+          }
+        ]
+      }
+    });
+
+    client.player
+      .getQueue(message.guild.id)
+      .on("end", () => {
+        message.channel.send({
+          embed: {
+            color: client.config.embed,
+            description: `**Queue** | The available queue has finished, please make a request again or run \`R!disconnect\`.`
+          }
+        });
+      })
+      .on("trackChanged", (oldTrack, newTrack, skipped, repeatMode) => {
+        if (repeatMode) {
+          message.channel.send({
+            embed: {
+              color: client.config.embed,
+              description: `**Repeat Mode** | Repeating: [${oldTrack.name}](${oldTrack.url})`
+            },
+            fields: [
+              {
+                name: `Duration`,
+                value: `\`${oldTrack.duration}\``,
+                inline: true
+              },
+              {
+                name: `Author`,
+                value: `\`${oldTrack.author}\``,
+                inline: true
+              },
+              {
+                name: `Requested By`,
+                value: `\`${oldTrack.requestedBy}\``,
+                inline: true
+              }
+            ]
+          });
         } else {
-            try {
-                var searched = await yts.search(searchString);
-                if (searched.videos.length === 0) return sendError("Looks like i was unable to find the song on YouTube", message.channel);
-
-                songInfo = searched.videos[0];
-                song = {
-                    id: songInfo.videoId,
-                    title: Util.escapeMarkdown(songInfo.title),
-                    views: String(songInfo.views).padStart(10, " "),
-                    url: songInfo.url,
-                    ago: songInfo.ago,
-                    img: songInfo.image,
-                    req: message.author,
-                };
-            } catch (error) {
-                console.error(error);
-                return message.reply(error.message).catch(console.error);
-            }
-        }
-
-        if (serverQueue) {
-            serverQueue.songs.push(song);
-            let thing = new MessageEmbed()
-                .setAuthor("Song has been added to queue", "https://github.com/navaneethkm004/my-images/blob/main/giphy.gif?raw=true")
-                .setThumbnail(song.img)
-                .setColor("#fffdd0")
-                .addField("Name", song.title, true)
-                .addField("Duration", song.duration, true)
-                .addField("Requested by", song.req.tag, true)
-                .setFooter(`Views: ${song.views} | ${song.ago}`);
-            return message.channel.send(thing);
-        }
-
-        const queueConstruct = {
-            textChannel: message.channel,
-            voiceChannel: channel,
-            connection: null,
-            songs: [],
-            volume: 80,
-            playing: true,
-            loop: true,
-        };
-        message.client.queue.set(message.guild.id, queueConstruct);
-        queueConstruct.songs.push(song);
-
-        const play = async (song) => {
-            const queue = message.client.queue.get(message.guild.id);
-            if (!song) {
-                sendError(
-                    "Thank you for using my code! [GitHub](https://github.com/navaneethkm004/Discord-24x7-Radio-Bot)",
-                    message.channel
-                );
-                message.client.queue.delete(message.guild.id);
-                return;
-            }
-            let stream = null;
-            if (song.url.includes("youtube.com")) {
-                stream = await ytdl(song.url);
-                stream.on("error", function (er) {
-                    if (er) {
-                        if (queue) {
-                            queue.songs.shift();
-                            play(queue.songs[0]);
-                            return sendError(`An unexpected error has occurred.\nPossible type \`${er}\``, message.channel);
-                        }
-                    }
-                });
-            }
-            queue.connection.on("disconnect", () => message.client.queue.delete(message.guild.id));
-
-            const dispatcher = queue.connection.play(ytdl(song.url, { quality: "highestaudio", highWaterMark: 1 << 25, type: "opus" })).on("finish", () => {
-                const shiffed = queue.songs.shift();
-                if (queue.loop === true) {
-                    queue.songs.push(shiffed);
+          message.channel.send({
+            embed: {
+              color: client.config.embed,
+              description: `**Now Playing** | [${song.name}](${song.url})`,
+              thumbnail: {
+                url: newTrack.thumbnail
+              },
+              fields: [
+                {
+                  name: `Duration`,
+                  value: `\`${newTrack.duration}\``,
+                  inline: true
+                },
+                {
+                  name: `Author`,
+                  value: `\`${newTrack.author}\``,
+                  inline: true
+                },
+                {
+                  name: `Requested By`,
+                  value: `\`${newTrack.requestedBy}\``,
+                  inline: true
                 }
-                play(queue.songs[0]);
-            });
-
-            dispatcher.setVolumeLogarithmic(queue.volume / 100);
-            let thing = new MessageEmbed()
-                .setAuthor("Started Playing Music!", "https://github.com/navaneethkm004/my-images/blob/main/giphy.gif?raw=true")
-                .setThumbnail(song.img)
-                .setColor("#fffdd0")
-                .addField("Name", song.title, true)
-                .addField("Duration", song.duration, true)
-                .addField("Requested by", song.req.tag, true)
-                .setFooter(`Views: ${song.views} | ${song.ago}`);
-            queue.textChannel.send(thing);
-        };
-
-        try {
-            const connection = await channel.join();
-            queueConstruct.connection = connection;
-            play(queueConstruct.songs[0]);
-        } catch (error) {
-            console.error(`I could not join the voice channel: ${error}`);
-            message.client.queue.delete(message.guild.id);
-            await channel.leave();
-            return sendError(`I could not join the voice channel: ${error}`, message.channel);
+              ]
+            }
+          });
         }
-    },
+      });
+  }
 };
-Footer
-© 2022 GitHub, Inc.
-Footer navigation
-Terms
-Privacy
-Security
-Status
-Docs
-Contact GitHub
-Pricing
-API
-Training
-Blog
-About
-You have no unread notifications
+
+module.exports.help = {
+  name: "play",
+  module: __dirname.slice(__dirname.lastIndexOf("/")).slice(1),
+  description: "",
+  aliases: ["p"],
+  usage: "R!play song",
+  checkArgs: args => !!args.length
+};
